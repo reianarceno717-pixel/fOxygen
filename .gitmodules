@@ -1,3 +1,6 @@
 [submodule "api"]
 	path = api
 	url = https://github.com/fahrez182/Axeron-API.git
+[submodule "manager/src/main/cpp/llama.cpp"]
+	path = manager/src/main/cpp/llama.cpp
+	url = https://github.com/ggml-org/llama.cpp

@@ -1,0 +1,31 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(axm_offline_ai LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+    find_package(cxx REQUIRED CONFIG)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+    set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+    set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
+    set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
+    set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
+
+    add_subdirectory(llama.cpp)
+    add_library(quicksh_ai SHARED quickshell_llama_jni.cpp)
+    target_include_directories(quicksh_ai PRIVATE llama.cpp/include)
+    target_link_libraries(quicksh_ai PRIVATE llama cxx::cxx android log)
+else()
+    # Keep the rest of AxM-Next buildable for its existing ABIs. Offline AI is
+    # guarded in Kotlin and only ships a real runtime on 64-bit ARM.
+    add_library(quicksh_ai SHARED quickshell_llama_unsupported.cpp)
+    target_link_libraries(quicksh_ai PRIVATE android log)
+endif()

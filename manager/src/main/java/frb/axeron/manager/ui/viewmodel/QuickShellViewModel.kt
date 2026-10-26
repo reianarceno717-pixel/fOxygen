@@ -16,17 +16,20 @@ import frb.axeron.api.core.AxeronSettings
 import frb.axeron.api.utils.AnsiFilter
 import frb.axeron.axerish.R
 import frb.axeron.manager.AxeronApplication
-import frb.axeron.manager.ai.GeminiCommandService
+import frb.axeron.manager.ai.OfflineCommandService
 import frb.axeron.manager.ui.util.TerminalBuffer
 import frb.axeron.manager.ui.util.TerminalPrefs
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class QuickShellViewModel(application: Application) : AndroidViewModel(application) {
 
     var session: AxeronCommandSession = AxeronCommandSession()
     private val okhttpClient = (application as AxeronApplication).okhttpClient
+    private val offlineCommandService = OfflineCommandService(application, okhttpClient)
     private var savedCommand: TextFieldValue? = null
 
     // Lives here, not in the screen, so the log survives leaving and re-entering QuickShell.
@@ -140,8 +143,15 @@ class QuickShellViewModel(application: Application) : AndroidViewModel(applicati
     var execMode by mutableStateOf("Commands")
         private set
 
-    // The API key is kept only in this ViewModel's memory and is never written to preferences.
-    var geminiApiKey by mutableStateOf("")
+    val isOfflineAiSupported = offlineCommandService.isSupported
+
+    var isOfflineModelInstalled by mutableStateOf(offlineCommandService.isModelInstalled())
+        private set
+
+    var isDownloadingOfflineModel by mutableStateOf(false)
+        private set
+
+    var offlineModelDownloadProgress by mutableStateOf(0f)
         private set
 
     var aiCommand by mutableStateOf<String?>(null)
@@ -160,9 +170,27 @@ class QuickShellViewModel(application: Application) : AndroidViewModel(applicati
         commandText = text
     }
 
-    fun updateGeminiApiKey(value: String) {
-        geminiApiKey = value
+    fun downloadOfflineModel() {
+        if (!isOfflineAiSupported || isDownloadingOfflineModel || isOfflineModelInstalled) return
         clearAiOutput()
+        isDownloadingOfflineModel = true
+        offlineModelDownloadProgress = 0f
+        viewModelScope.launch {
+            try {
+                offlineCommandService.downloadModel { downloaded, total ->
+                    withContext(Dispatchers.Main.immediate) {
+                        offlineModelDownloadProgress = (downloaded.toFloat() / total).coerceIn(0f, 1f)
+                    }
+                }
+                isOfflineModelInstalled = offlineCommandService.isModelInstalled()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                aiError = e.message ?: "Could not download the offline model. Check your connection and storage."
+            } finally {
+                isDownloadingOfflineModel = false
+            }
+        }
     }
 
     fun clearAiOutput() {
@@ -177,8 +205,12 @@ class QuickShellViewModel(application: Application) : AndroidViewModel(applicati
             aiError = "Describe the command you need."
             return
         }
-        if (geminiApiKey.isBlank()) {
-            aiError = "Enter a Gemini API key to generate a command."
+        if (!isOfflineAiSupported) {
+            aiError = "Offline AI requires Android 9 or newer on a 64-bit ARM device."
+            return
+        }
+        if (!isOfflineModelInstalled) {
+            aiError = "Download the offline model first. It is needed only once."
             return
         }
         if (isGeneratingAiCommand) return
@@ -186,19 +218,18 @@ class QuickShellViewModel(application: Application) : AndroidViewModel(applicati
         isGeneratingAiCommand = true
         viewModelScope.launch {
             try {
-                val suggestion = GeminiCommandService(
-                    apiKey = geminiApiKey,
-                    client = okhttpClient
-                ).suggestCommand(request)
+                val suggestion = offlineCommandService.suggestCommand(request)
                 aiCommand = suggestion?.command
                 aiDescription = suggestion?.description
                 if (suggestion == null) {
-                    aiError = "I couldn't identify one reliable command. Try a more specific request."
+                    aiError = "I couldn't suggest a safe command. Try a clearer request."
                 }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: LinkageError) {
+                aiError = "The offline AI runtime is unavailable in this app build."
             } catch (e: Exception) {
-                aiError = e.message ?: "Could not contact Gemini. Check your connection and API key."
+                aiError = e.message ?: "Could not generate a command on this device."
             } finally {
                 isGeneratingAiCommand = false
             }
@@ -235,6 +266,7 @@ class QuickShellViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     override fun onCleared() {
+        Thread({ offlineCommandService.close() }, "offline-ai-release").start()
         super.onCleared()
         if (Axeron.pingBinder()) stop()
         terminal.close()

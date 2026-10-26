@@ -79,3 +79,5 @@
 
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+# JNI names are exported from quicksh_ai by this class and must remain stable.
+-keep class frb.axeron.manager.ai.OfflineLlama { *; }

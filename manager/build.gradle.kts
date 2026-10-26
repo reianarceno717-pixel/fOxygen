@@ -15,6 +15,19 @@ android {
 
     defaultConfig {
         applicationId = "frb.axeron.manager"
+        externalNativeBuild {
+            cmake {
+                arguments += "-DCMAKE_BUILD_TYPE=Release"
+                arguments += "-DANDROID_STL=none"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = project.file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildTypes {
@@ -60,6 +73,7 @@ android {
     buildFeatures {
         buildConfig = true
         compose = true
+        prefab = true
     }
 }
 
@@ -113,4 +127,5 @@ dependencies {
     implementation(libs.sheet.compose.dialogs.input)
 
     implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.libcxx)
 }

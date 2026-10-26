@@ -1,6 +1,5 @@
 package frb.axeron.manager.ui.screen
 
-import android.annotation.SuppressLint
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -24,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -54,6 +54,7 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -77,12 +78,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -92,7 +93,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -103,10 +103,14 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import frb.axeron.api.Axeron
 import frb.axeron.api.utils.AnsiFilter
 import frb.axeron.manager.R
+import frb.axeron.manager.ai.OfflineCommandService
 import frb.axeron.manager.ui.component.TerminalOutput
 import frb.axeron.manager.ui.component.TerminalOptionsCard
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import frb.axeron.manager.ui.util.TerminalBuffer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.derivedStateOf
@@ -172,6 +176,7 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
     var showExtraDialog by remember { mutableStateOf(false) }
     var showAiPopup by remember { mutableStateOf(false) }
     var aiPrompt by remember { mutableStateOf("") }
+    var keyboardVisible by remember { mutableStateOf(false) }
 
     ExtraSettings(
         showExtraDialog,
@@ -222,30 +227,32 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
             )
         },
         floatingActionButton = {
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        showAiPopup = !showAiPopup
-                        if (showAiPopup) viewModel.clearAiOutput()
-                    },
-                    icon = { Icon(Icons.Outlined.Bolt, contentDescription = null) },
-                    text = { Text("Ask AI Command") }
-                )
-                AnimatedVisibility(
-                    visible = fabVisible && hasLogs,
-                    enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
-                    exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+            if (!keyboardVisible && !showAiPopup && (!hasLogs || fabVisible)) {
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    val context = LocalContext.current
-                    FloatingActionButton(shape = CircleShape, onClick = {
-                        scope.launch {
-                            saveLogsToDownload(context, viewModel.terminal, snackBarHost)
+                    ExtendedFloatingActionButton(
+                        onClick = {
+                            showAiPopup = !showAiPopup
+                            if (showAiPopup) viewModel.clearAiOutput()
+                        },
+                        icon = { Icon(Icons.Outlined.Bolt, contentDescription = null) },
+                        text = { Text("Ask AI Command") }
+                    )
+                    AnimatedVisibility(
+                        visible = fabVisible && hasLogs && !running,
+                        enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+                        exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+                    ) {
+                        val context = LocalContext.current
+                        FloatingActionButton(shape = CircleShape, onClick = {
+                            scope.launch {
+                                saveLogsToDownload(context, viewModel.terminal, snackBarHost)
+                            }
+                        }) {
+                            Icon(Icons.Default.Save, contentDescription = stringResource(R.string.save))
                         }
-                    }) {
-                        Icon(Icons.Default.Save, contentDescription = stringResource(R.string.save))
                     }
                 }
             }
@@ -254,7 +261,6 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
     ) { paddingValues ->
         val context = LocalContext.current
         val focusManager = LocalFocusManager.current
-        var keyboardVisible by remember { mutableStateOf(false) }
         val keyboardController = LocalSoftwareKeyboardController.current
 
         KeyEventBlocker {
@@ -289,6 +295,7 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
             Modifier
                 .padding(paddingValues)
                 .padding(horizontal = 16.dp)
+                .imePadding()
                 .fillMaxSize()
         ) {
 
@@ -328,17 +335,10 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
                 modifier = Modifier.fillMaxSize()
             )
 
-            @SuppressLint("ConfigurationScreenWidthHeight")
-            val screen = LocalConfiguration.current.screenHeightDp
-            val paddingHeight = (screen * 0.52).dp
-
-
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .run {
-                        if (keyboardVisible) padding(bottom = paddingHeight) else this
-                    },
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (showAiPopup) {
@@ -349,11 +349,14 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
                             aiPrompt = it
                             viewModel.clearAiOutput()
                         },
+                        onDownloadModel = viewModel::downloadOfflineModel,
                         onGenerate = { viewModel.requestAiCommand(aiPrompt) },
                         onClose = { showAiPopup = false },
                         onInsert = {
                             viewModel.insertAiCommand()
                             showAiPopup = false
+                            focusManager.clearFocus()
+                            keyboardController?.hide()
                         }
                     )
                 }
@@ -385,7 +388,7 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
                             ),
                             fontFamily = FontFamily.Monospace
                         ),
-                        maxLines = if (keyboardVisible) Int.MAX_VALUE else 1,
+                        maxLines = if (keyboardVisible) 4 else 1,
                         colors = TextFieldDefaults.colors(
                             focusedIndicatorColor = Color.Transparent,   // garis saat fokus
                             unfocusedIndicatorColor = Color.Transparent, // garis saat tidak fokus
@@ -406,9 +409,27 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
 
                     IconButton(
                         onClick = {
-                            viewModel.runShell()
-                            focusManager.clearFocus()
-                            keyboardController?.hide()
+                            if (viewModel.commandText.text.isNotBlank()) {
+                                showAiPopup = false
+                                fabVisible = false
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
+                                scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                                    val processStarted = withTimeoutOrNull(10_000) {
+                                        snapshotFlow { viewModel.isRunning }.first { it }
+                                    } != null
+                                    if (!processStarted) return@launch
+                                    snapshotFlow {
+                                        viewModel.isRunning to viewModel.terminal.snapshot.version
+                                    }.collect { (processRunning, _) ->
+                                        withFrameNanos { }
+                                        val lastVisibleItem = listState.layoutInfo.totalItemsCount - 1
+                                        if (lastVisibleItem >= 0) listState.scrollToItem(lastVisibleItem)
+                                        if (!processRunning) return@launch
+                                    }
+                                }
+                                viewModel.runShell()
+                            }
                         },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
@@ -435,6 +456,7 @@ private fun AskAiCommandPopup(
     viewModel: QuickShellViewModel,
     prompt: String,
     onPromptChange: (String) -> Unit,
+    onDownloadModel: () -> Unit,
     onGenerate: () -> Unit,
     onClose: () -> Unit,
     onInsert: () -> Unit
@@ -466,7 +488,7 @@ private fun AskAiCommandPopup(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "Gemini Flash suggests a command; it won't run until you press Run.",
+                        text = "Offline AI suggests a command; it won't run until you press Run.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -482,37 +504,43 @@ private fun AskAiCommandPopup(
                 placeholder = { Text("e.g., Check CPU frequency") },
                 minLines = 2,
                 maxLines = 3,
-                enabled = !viewModel.isGeneratingAiCommand
+                enabled = !viewModel.isGeneratingAiCommand && !viewModel.isDownloadingOfflineModel
             )
 
-            if (viewModel.geminiApiKey.isBlank()) {
-                OutlinedTextField(
-                    value = viewModel.geminiApiKey,
-                    onValueChange = viewModel::updateGeminiApiKey,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Gemini API key") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    enabled = !viewModel.isGeneratingAiCommand
+            when {
+                !viewModel.isOfflineAiSupported -> Text(
+                    text = "Offline AI requires Android 9 or newer on a 64-bit ARM device.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
                 )
-                Text(
-                    text = "Use your AI Studio key. It is kept only in memory for this session.",
+                viewModel.isOfflineModelInstalled -> Text(
+                    text = "${OfflineCommandService.MODEL_DISPLAY_NAME} (Apache-2.0) is ready. Works offline with no API key.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                else -> {
                     Text(
-                        text = "Gemini API key set for this session",
-                        modifier = Modifier.weight(1f),
+                        text = "${OfflineCommandService.MODEL_DISPLAY_NAME} (Apache-2.0). Download once (${OfflineCommandService.MODEL_SIZE_LABEL}; Wi-Fi recommended); afterward it works offline.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    TextButton(
-                        onClick = { viewModel.updateGeminiApiKey("") },
-                        enabled = !viewModel.isGeneratingAiCommand
-                    ) {
-                        Text("Change")
+                    if (viewModel.isDownloadingOfflineModel) {
+                        LinearProgressIndicator(
+                            progress = { viewModel.offlineModelDownloadProgress },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            text = "Downloading model: ${(viewModel.offlineModelDownloadProgress * 100).toInt()}%",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Button(
+                            onClick = onDownloadModel,
+                            enabled = !viewModel.isGeneratingAiCommand
+                        ) {
+                            Text("Download offline model (${OfflineCommandService.MODEL_SIZE_LABEL})")
+                        }
                     }
                 }
             }
@@ -520,7 +548,11 @@ private fun AskAiCommandPopup(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Button(
                     onClick = onGenerate,
-                    enabled = !viewModel.isGeneratingAiCommand && prompt.isNotBlank()
+                    enabled = !viewModel.isGeneratingAiCommand &&
+                            !viewModel.isDownloadingOfflineModel &&
+                            prompt.isNotBlank() &&
+                            viewModel.isOfflineAiSupported &&
+                            viewModel.isOfflineModelInstalled
                 ) {
                     Text("Generate command")
                 }
@@ -534,7 +566,7 @@ private fun AskAiCommandPopup(
                             modifier = Modifier.size(18.dp),
                             strokeWidth = 2.dp
                         )
-                        Text("Generating…", style = MaterialTheme.typography.bodySmall)
+                        Text("Generating on device…", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -584,7 +616,7 @@ private fun AskAiCommandPopup(
                             onClick = onInsert,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Insert into Terminal")
+                            Text("Use command")
                         }
                     }
                 }
