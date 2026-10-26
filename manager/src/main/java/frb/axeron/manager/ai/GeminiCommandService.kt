@@ -159,7 +159,7 @@ class GeminiCommandService(
         private const val DEFAULT_MODEL = "gemini-3.8-flash"
         private const val NO_COMMAND = "NO_COMMAND"
         private const val MAX_DESCRIPTION_LENGTH = 180
-        private const val SYSTEM_INSTRUCTION = """
+        private val SYSTEM_INSTRUCTION = """
             Suggest exactly one Android device-shell command for the user's request.
             Return a JSON object with fields command and description. The command must be one
             single line, must not start with `adb shell`, and should use Android shell/toybox tools.
