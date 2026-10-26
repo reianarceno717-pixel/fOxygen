@@ -160,7 +160,7 @@ class QuickShellViewModel(application: Application) : AndroidViewModel(applicati
         commandText = text
     }
 
-    fun setGeminiApiKey(value: String) {
+    fun updateGeminiApiKey(value: String) {
         geminiApiKey = value
         clearAiOutput()
     }

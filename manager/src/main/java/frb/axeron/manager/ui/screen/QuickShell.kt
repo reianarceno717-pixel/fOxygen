@@ -488,7 +488,7 @@ private fun AskAiCommandPopup(
             if (viewModel.geminiApiKey.isBlank()) {
                 OutlinedTextField(
                     value = viewModel.geminiApiKey,
-                    onValueChange = viewModel::setGeminiApiKey,
+                    onValueChange = viewModel::updateGeminiApiKey,
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Gemini API key") },
                     singleLine = true,
@@ -509,7 +509,7 @@ private fun AskAiCommandPopup(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     TextButton(
-                        onClick = { viewModel.setGeminiApiKey("") },
+                        onClick = { viewModel.updateGeminiApiKey("") },
                         enabled = !viewModel.isGeneratingAiCommand
                     ) {
                         Text("Change")
