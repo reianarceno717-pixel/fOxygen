@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -33,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ClearAll
 import androidx.compose.material.icons.filled.Save
@@ -43,18 +45,23 @@ import androidx.compose.material.icons.outlined.DoNotTouch
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Output
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -85,6 +92,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -162,6 +170,8 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
     val snackBarHost = LocalSnackbarHost.current
 
     var showExtraDialog by remember { mutableStateOf(false) }
+    var showAiPopup by remember { mutableStateOf(false) }
+    var aiPrompt by remember { mutableStateOf("") }
 
     ExtraSettings(
         showExtraDialog,
@@ -169,7 +179,6 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
     ) {
         showExtraDialog = false
     }
-
 
     Scaffold(
         topBar = {
@@ -213,18 +222,31 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
             )
         },
         floatingActionButton = {
-            AnimatedVisibility(
-                visible = fabVisible && hasLogs,
-                enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
-                exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                val context = LocalContext.current
-                FloatingActionButton(shape = CircleShape, onClick = {
-                    scope.launch {
-                        saveLogsToDownload(context, viewModel.terminal, snackBarHost)
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        showAiPopup = !showAiPopup
+                        if (showAiPopup) viewModel.clearAiOutput()
+                    },
+                    icon = { Icon(Icons.Outlined.Bolt, contentDescription = null) },
+                    text = { Text("Ask AI Command") }
+                )
+                AnimatedVisibility(
+                    visible = fabVisible && hasLogs,
+                    enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+                    exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+                ) {
+                    val context = LocalContext.current
+                    FloatingActionButton(shape = CircleShape, onClick = {
+                        scope.launch {
+                            saveLogsToDownload(context, viewModel.terminal, snackBarHost)
+                        }
+                    }) {
+                        Icon(Icons.Default.Save, contentDescription = stringResource(R.string.save))
                     }
-                }) {
-                    Icon(Icons.Default.Save, contentDescription = stringResource(R.string.save))
                 }
             }
         },
@@ -311,22 +333,38 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
             val paddingHeight = (screen * 0.52).dp
 
 
-            ElevatedCard(
-                shape = RoundedCornerShape(10.dp),
-                colors = CardDefaults.elevatedCardColors().copy(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-//                    containerColor = Color.Transparent
-                ),
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .run {
-                        if (keyboardVisible) {
-                            padding(bottom = paddingHeight)
-                        } else {
-                            padding(bottom = 0.dp)
-                        }
-                    }
+                        if (keyboardVisible) padding(bottom = paddingHeight) else this
+                    },
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                if (showAiPopup) {
+                    AskAiCommandPopup(
+                        viewModel = viewModel,
+                        prompt = aiPrompt,
+                        onPromptChange = {
+                            aiPrompt = it
+                            viewModel.clearAiOutput()
+                        },
+                        onGenerate = { viewModel.requestAiCommand(aiPrompt) },
+                        onClose = { showAiPopup = false },
+                        onInsert = {
+                            viewModel.insertAiCommand()
+                            showAiPopup = false
+                        }
+                    )
+                }
+
+                ElevatedCard(
+                    shape = RoundedCornerShape(10.dp),
+                    colors = CardDefaults.elevatedCardColors().copy(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -386,7 +424,171 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
                     }
                 }
             }
+            }
 
+        }
+    }
+}
+
+@Composable
+private fun AskAiCommandPopup(
+    viewModel: QuickShellViewModel,
+    prompt: String,
+    onPromptChange: (String) -> Unit,
+    onGenerate: () -> Unit,
+    onClose: () -> Unit,
+    onInsert: () -> Unit
+) {
+    ElevatedCard(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.elevatedCardColors().copy(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 420.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Ask AI Command",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Gemini Flash suggests a command; it won't run until you press Run.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(onClick = onClose) { Text("Close") }
+            }
+
+            OutlinedTextField(
+                value = prompt,
+                onValueChange = onPromptChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("What should the command do?") },
+                placeholder = { Text("e.g., Check CPU frequency") },
+                minLines = 2,
+                maxLines = 3,
+                enabled = !viewModel.isGeneratingAiCommand
+            )
+
+            if (viewModel.geminiApiKey.isBlank()) {
+                OutlinedTextField(
+                    value = viewModel.geminiApiKey,
+                    onValueChange = viewModel::setGeminiApiKey,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Gemini API key") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    enabled = !viewModel.isGeneratingAiCommand
+                )
+                Text(
+                    text = "Use your AI Studio key. It is kept only in memory for this session.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Gemini API key set for this session",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    TextButton(
+                        onClick = { viewModel.setGeminiApiKey("") },
+                        enabled = !viewModel.isGeneratingAiCommand
+                    ) {
+                        Text("Change")
+                    }
+                }
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = onGenerate,
+                    enabled = !viewModel.isGeneratingAiCommand && prompt.isNotBlank()
+                ) {
+                    Text("Generate command")
+                }
+                if (viewModel.isGeneratingAiCommand) {
+                    Row(
+                        modifier = Modifier.padding(start = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Text("Generating…", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+
+            viewModel.aiError?.let { message ->
+                Text(
+                    text = message,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            viewModel.aiCommand?.let { command ->
+                ElevatedCard(
+                    colors = CardDefaults.elevatedCardColors().copy(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Suggested command",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        viewModel.aiDescription?.let { description ->
+                            Text(
+                                text = description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        SelectionContainer {
+                            Text(
+                                text = command,
+                                modifier = Modifier.fillMaxWidth(),
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            )
+                        }
+                        Button(
+                            onClick = onInsert,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Insert into Terminal")
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -629,6 +831,3 @@ suspend fun saveLogsToDownload(
         snackbar.showSnackbar(logFailed.format(e.message))
     }
 }
-
-
-

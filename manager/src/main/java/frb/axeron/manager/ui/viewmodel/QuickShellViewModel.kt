@@ -15,13 +15,18 @@ import frb.axeron.api.AxeronCommandSession
 import frb.axeron.api.core.AxeronSettings
 import frb.axeron.api.utils.AnsiFilter
 import frb.axeron.axerish.R
+import frb.axeron.manager.AxeronApplication
+import frb.axeron.manager.ai.GeminiCommandService
 import frb.axeron.manager.ui.util.TerminalBuffer
 import frb.axeron.manager.ui.util.TerminalPrefs
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import java.io.File
 
 class QuickShellViewModel(application: Application) : AndroidViewModel(application) {
 
     var session: AxeronCommandSession = AxeronCommandSession()
+    private val okhttpClient = (application as AxeronApplication).okhttpClient
     private var savedCommand: TextFieldValue? = null
 
     // Lives here, not in the screen, so the log survives leaving and re-entering QuickShell.
@@ -135,8 +140,78 @@ class QuickShellViewModel(application: Application) : AndroidViewModel(applicati
     var execMode by mutableStateOf("Commands")
         private set
 
+    // The API key is kept only in this ViewModel's memory and is never written to preferences.
+    var geminiApiKey by mutableStateOf("")
+        private set
+
+    var aiCommand by mutableStateOf<String?>(null)
+        private set
+
+    var aiDescription by mutableStateOf<String?>(null)
+        private set
+
+    var aiError by mutableStateOf<String?>(null)
+        private set
+
+    var isGeneratingAiCommand by mutableStateOf(false)
+        private set
+
     fun setCommand(text: TextFieldValue) {
         commandText = text
+    }
+
+    fun setGeminiApiKey(value: String) {
+        geminiApiKey = value
+        clearAiOutput()
+    }
+
+    fun clearAiOutput() {
+        aiCommand = null
+        aiDescription = null
+        aiError = null
+    }
+
+    fun requestAiCommand(request: String) {
+        clearAiOutput()
+        if (request.isBlank()) {
+            aiError = "Describe the command you need."
+            return
+        }
+        if (geminiApiKey.isBlank()) {
+            aiError = "Enter a Gemini API key to generate a command."
+            return
+        }
+        if (isGeneratingAiCommand) return
+
+        isGeneratingAiCommand = true
+        viewModelScope.launch {
+            try {
+                val suggestion = GeminiCommandService(
+                    apiKey = geminiApiKey,
+                    client = okhttpClient
+                ).suggestCommand(request)
+                aiCommand = suggestion?.command
+                aiDescription = suggestion?.description
+                if (suggestion == null) {
+                    aiError = "I couldn't identify one reliable command. Try a more specific request."
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                aiError = e.message ?: "Could not contact Gemini. Check your connection and API key."
+            } finally {
+                isGeneratingAiCommand = false
+            }
+        }
+    }
+
+    fun insertAiCommand() {
+        val command = aiCommand ?: return
+        commandText = TextFieldValue(
+            text = command,
+            selection = TextRange(command.length)
+        )
+        execMode = "Commands"
     }
 
     fun clear() {
@@ -165,5 +240,3 @@ class QuickShellViewModel(application: Application) : AndroidViewModel(applicati
         terminal.close()
     }
 }
-
-
